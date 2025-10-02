@@ -18,29 +18,50 @@ FinStateMachine::FinStateMachine(const std::string &filepath) {
     //файл считается полностью корректным
     fin >> n >> m;
 
+    fin.ignore(std::numeric_limits<std::streamsize>::max(), '\n'); // убираем остаток строки после m
+
     start.assign(n, 0);
     accept.assign(n, 0);
     startList.clear();
     acceptList.clear();
 
-    transitions.assign(n, std::vector <std::vector <int>>(m));
+    transitions.assign(n + 1, std::vector <std::vector <int>>(m + 1));
 
-    int s;
-    while (fin.peek() != '\n' && fin >> s) {
-        start[s] = 1;
-        startList.push_back(s);
+    std::string line;
+    int x;
+
+    if (std::getline(fin, line)) {
+        std::istringstream iss(line);
+        while (iss >> x) {
+            if (x >= 0 && x < n) {
+                start[x] = 1;
+            startList.push_back(x);
+            }
+        }
     }
 
-    int a;
-    while (fin.peek() != '\n' && fin >> a) {
-        accept[a] = 1;
-        acceptList.push_back(a);
+    if (std::getline(fin, line)) {
+        std::istringstream iss(line);
+        while (iss >> x) {
+            if (x >= 0 && x < n) {
+                accept[x] = 1;
+            acceptList.push_back(x);
+            }
+        }
     }
 
     int cond1, num, cond2;
     while (fin >> cond1 >> num >> cond2) {
         transitions[cond1][num].push_back(cond2);
     }
+
+    std::cout << "start: ";
+    for (int x : startList) std::cout << x << " ";
+    std::cout << std::endl;
+
+    std::cout << "accept: ";
+    for (int x : acceptList) std::cout << x << " ";
+    std::cout << std::endl;
 }
 
 std::vector <int> FinStateMachine::parseInputString(const std::string &s) {
@@ -57,19 +78,55 @@ bool FinStateMachine::isDFA() const noexcept {
     return true;
 }
 
-bool FinStateMachine::accepts(const std::vector<int> &input) const {
-    std::vector <int> data = parseInputString(input);
-
+bool FinStateMachine::accepts(const std::vector<int> &data) const {
     if (isDFA()) {
         int cur = startList[0];
         for (int num : data) {
-            if (transitions[cur][num] != 1) return false;
-            cur = transitions[cur][num];
+            if (transitions[cur][num].size() != 1) return false;
+            cur = transitions[cur][num][0];
         }
         return true;
     } else {
+        std::vector<char> cur(n, 0), next(n, 0);
 
+        if (!startList.empty()) {
+            for (int s : startList) cur[s] = 1;
+        } else {
+            for (int i = 0; i < n; ++i) if (start[i]) cur[i] = 1;
+        }
+
+        if (data.empty()) {
+            for (int i = 0; i < n; ++i) if (cur[i] && accept[i]) return true;
+            return false;
+        }
+
+        for (int num : data) {
+            if (num < 0 || num >= m) return false;
+
+            std::fill(next.begin(), next.end(), 0);
+
+            for (int s = 0; s < n; ++s) {
+                if (!cur[s]) continue;
+                const auto &targets = transitions[s][num];
+                for (int dst : targets) {
+                    next[dst] = 1;
+                }
+            }
+
+            cur.swap(next);
+
+            bool any = false;
+            for (int i = 0; i < n; ++i) if (cur[i]) { any = true; break; }
+            if (!any) return false;
+        }
+
+        for (int i = 0; i < n; ++i) if (cur[i] && accept[i]) return true;
+        return false;
     }
+}
+
+FinStateMachine toDFA() const {
+    int x;
 }
 
 void FinStateMachine::writeToFile(const std::string &filepath) const {
