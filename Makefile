@@ -21,3 +21,8 @@ $(TARGET): $(OBJS)
 
 %.o: %.cpp
 	@$(CXX) $(CXXFLAGS) -c $< -o $@
+
+clean:
+	@if exist src\main.o del /Q src\main.o
+	@if exist src\fsmachine.o del /Q src\fsmachine.o
+	@if exist FSMachine.exe del /Q FSMachine.exe
