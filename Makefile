@@ -12,11 +12,12 @@ all: $(TARGET)
 
 $(TARGET): $(OBJS)
 	@$(CXX) $(CXXFLAGS) -o $@ $(OBJS)
+	@echo Please read README.md before run! Usage:
+	@echo ./FSMachine run ^<filepath^> ^<input^>
+	@echo ./FSMachine refactor ^<filepath1^> ^<filepath2^>
 
 %.o: %.cpp %.hpp
 	@$(CXX) $(CXXFLAGS) -c $< -o $@
 
 %.o: %.cpp
 	@$(CXX) $(CXXFLAGS) -c $< -o $@
-
-

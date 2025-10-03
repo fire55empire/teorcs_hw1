@@ -64,12 +64,6 @@ FinStateMachine::FinStateMachine(const std::string &filepath) {
     std::cout << std::endl;
 }
 
-std::vector <int> FinStateMachine::parseInputString(const std::string &s) {
-    std::vector <int> data;
-    for (int i = 0; i < s.size(); ++i) data.push_back(s[i] - '0');
-    return data;
-}
-
 bool FinStateMachine::isDFA() const noexcept {
     if (startList.size() != 1) return false;
     for (int cond1 = 0; cond1 < n; ++cond1)
@@ -125,10 +119,115 @@ bool FinStateMachine::accepts(const std::vector<int> &data) const {
     }
 }
 
-FinStateMachine toDFA() const {
-    int x;
+FinStateMachine FinStateMachine::toDFA() const {
+   	std::map<std::vector<int>, int> idx;
+    std::vector<std::vector<int>> sets; // reverse map: dfa id -> subset of NFA states
+
+    auto normalize = [](std::vector<int> v) {
+        std::sort(v.begin(), v.end());
+        v.erase(std::unique(v.begin(), v.end()), v.end());
+        return v;
+    };
+
+    std::vector<int> startSet = startList;
+    startSet = normalize(startSet);
+
+    idx[startSet] = 0;
+    sets.push_back(startSet);
+
+    std::vector<std::vector<std::vector<int>>> dfa_trans;
+    dfa_trans.emplace_back(m); // for state 0
+
+    std::queue<int> q;
+    q.push(0);
+
+    while (!q.empty()) {
+        int did = q.front(); q.pop();
+        const std::vector<int> &nfa_set = sets[did];
+
+        if ((int)dfa_trans.size() <= did) dfa_trans.resize(did + 1, std::vector<std::vector<int>>(m));
+
+        for (int sym = 0; sym < m; ++sym) {
+            std::vector<int> nextSet;
+            for (int s : nfa_set) {
+                if (s < 0 || s >= n) continue; // defensive
+                const auto &dsts = transitions[s][sym];
+                for (int d : dsts) nextSet.push_back(d);
+            }
+            nextSet = normalize(nextSet);
+
+            auto it = idx.find(nextSet);
+            int ndid;
+            if (it == idx.end()) {
+                ndid = (int)sets.size();
+                idx[nextSet] = ndid;
+                sets.push_back(nextSet);
+                dfa_trans.emplace_back(m);
+                q.push(ndid);
+            } else {
+                ndid = it->second;
+            }
+
+            if (!nextSet.empty()) dfa_trans[did][sym].push_back(ndid);
+        }
+    }
+
+    FinStateMachine dfa((int)sets.size(), m);
+
+    dfa.startList.clear();
+    dfa.startList.push_back(0);
+    dfa.start.assign(dfa.n, 0);
+    if (dfa.n > 0) dfa.start[0] = 1;
+
+    dfa.accept.assign(dfa.n, 0);
+    dfa.acceptList.clear();
+    for (int i = 0; i < dfa.n; ++i) {
+        for (int s : sets[i]) {
+            if (s >= 0 && s < n && accept[s]) {
+                dfa.accept[i] = 1;
+                dfa.acceptList.push_back(i);
+                break;
+            }
+        }
+    }
+
+    for (int i = 0; i < dfa.n; ++i) {
+        for (int sym = 0; sym < m; ++sym) {
+            const auto &vec = dfa_trans[i][sym];
+            for (int dst : vec) {
+                dfa.transitions[i][sym].push_back(dst);
+            }
+        }
+    }
+
+    return dfa;
 }
 
 void FinStateMachine::writeToFile(const std::string &filepath) const {
-    return;
+    std::ofstream fout(filepath);
+    if (!fout.is_open()) throw std::runtime_error("cannot open output file: " + filepath);
+
+    fout << n << " " << m << "\n";
+
+    for (size_t i = 0; i < startList.size(); ++i) {
+        if (i) fout << ' ';
+        fout << startList[i];
+    }
+    fout << "\n";
+
+    for (size_t i = 0; i < acceptList.size(); ++i) {
+        if (i) fout << ' ';
+        fout << acceptList[i];
+    }
+    fout << "\n";
+
+    for (int src = 0; src < n; ++src) {
+        for (int sym = 0; sym < m; ++sym) {
+            for (int dst : transitions[src][sym]) {
+                fout << src << " " << sym << " " << dst << "\n";
+            }
+        }
+    }
+
+    fout.close();
 }

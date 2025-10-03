@@ -10,6 +10,8 @@
 #include <algorithm>
 #include <cctype>
 #include <iostream>
+#include <map>
+#include <queue>
 
 
 struct FinStateMachine{
@@ -27,8 +29,6 @@ struct FinStateMachine{
     FinStateMachine(int n_, int m_);
 
     explicit FinStateMachine(const std::string &filepath);
-
-    std::vector <int> parseInputString(const std::string &s);
 
     bool isDFA() const noexcept;
 

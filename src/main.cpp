@@ -8,14 +8,34 @@ static std::vector<int> parseInputString(const std::string &s) {
     return res;
 }
 
-int main (int argc, char** argv) {
+int main(int argc, char** argv) {
+    if (argc != 3) {
+        std::cout << "Invalid number of arguments" << std::endl;
+        return 1;
+    }
 
-    const std::string filepath = argv[1];
-    const std::string inputStr = argv[2];
+    const std::string cmd = argv[1];
 
-    std::vector <int> data = parseInputString(inputStr);
+    if (cmd == "run") {
+        const std::string filepath = argv[2];
+        const std::string inputRaw = argv[3];
 
-    FinStateMachine FSM = FinStateMachine(filepath);
-    std::cout << FSM.isDFA() << std::endl;
-    return 0;
+        std::vector<int> input = parseInputString(inputRaw);
+        FinStateMachine fsm(filepath);
+        bool accepted = fsm.accepts(input);
+        std::cout << (accepted ? "true" : "false") << std::endl;
+        return 0;
+    } else {
+        const std::string inFile = argv[2];
+        const std::string outFile = argv[3];
+
+        FinStateMachine fsm(inFile);
+        if (fsm.isDFA()) {
+            fsm.writeToFile(outFile);
+        } else {
+            FinStateMachine dfa = fsm.toDFA();
+            dfa.writeToFile(outFile);
+        }
+        return 0;
+    }
 }
