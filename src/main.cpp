@@ -9,7 +9,7 @@ static std::vector<int> parseInputString(const std::string &s) {
 }
 
 int main(int argc, char** argv) {
-    if (argc != 3) {
+    if (argc > 5) {
         std::cout << "Invalid number of arguments" << std::endl;
         return 1;
     }
@@ -31,8 +31,10 @@ int main(int argc, char** argv) {
 
         FinStateMachine fsm(inFile);
         if (fsm.isDFA()) {
+            std::cout << "Your FSM remained unchanged. Writed to " << outFile << std::endl;
             fsm.writeToFile(outFile);
         } else {
+            std::cout << "Your FSM refactored to DFA. Writed to " << outFile << std::endl;
             FinStateMachine dfa = fsm.toDFA();
             dfa.writeToFile(outFile);
         }
