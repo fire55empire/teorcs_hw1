@@ -1,5 +1,6 @@
 #include "fsmachine.hpp"
 
+
 FinStateMachine::FinStateMachine(int n_, int m_) {
     n = n_;
     m = m_;
@@ -15,7 +16,6 @@ FinStateMachine::FinStateMachine(int n_, int m_) {
 FinStateMachine::FinStateMachine(const std::string &filepath) {
     std::ifstream fin(filepath);
     if (!fin.is_open()) throw std::runtime_error("cannot open file: " + filepath);
-    //файл считается полностью корректным
     fin >> n >> m;
 
     fin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
@@ -35,7 +35,7 @@ FinStateMachine::FinStateMachine(const std::string &filepath) {
         while (iss >> x) {
             if (x >= 0 && x < n) {
                 start[x] = 1;
-            startList.push_back(x);
+                startList.push_back(x);
             }
         }
     }
@@ -45,7 +45,7 @@ FinStateMachine::FinStateMachine(const std::string &filepath) {
         while (iss >> x) {
             if (x >= 0 && x < n) {
                 accept[x] = 1;
-            acceptList.push_back(x);
+                acceptList.push_back(x);
             }
         }
     }
@@ -68,10 +68,11 @@ bool FinStateMachine::accepts(const std::vector<int> &data) const {
     if (isDFA()) {
         int cur = startList[0];
         for (int num : data) {
+            if (num < 0 || num >= m) return false;
             if (transitions[cur][num].size() != 1) return false;
             cur = transitions[cur][num][0];
         }
-        return acceptList[cur] != 0;
+        return accept[cur] != 0;
     } else {
         std::vector<char> cur(n, 0), next(n, 0);
 
@@ -112,7 +113,7 @@ bool FinStateMachine::accepts(const std::vector<int> &data) const {
 }
 
 FinStateMachine FinStateMachine::toDFA() const {
-   	std::map<std::vector<int>, int> idx;
+    std::map<std::vector<int>, int> idx;
     std::vector<std::vector<int>> sets;
 
     auto normalize = [](std::vector<int> v) {
@@ -191,6 +192,189 @@ FinStateMachine FinStateMachine::toDFA() const {
     }
 
     return dfa;
+}
+
+static std::tuple<std::vector<std::vector<int>>, int, std::vector<char>> build_complete_deterministic(const FinStateMachine &fsm) {
+    if (!fsm.isDFA()) throw std::runtime_error("build_complete_deterministic: input must be DFA");
+
+    int n0 = fsm.n;
+    int m = fsm.m;
+    bool need_dead = false;
+    for (int i = 0; i < fsm.n; ++i)
+        for (int sym = 0; sym < fsm.m; ++sym)
+            if (fsm.transitions[i][sym].empty()) need_dead = true;
+
+    int dead = -1;
+    if (need_dead) {
+        dead = n0;
+        ++n0;
+    }
+
+    std::vector<std::vector<int>> trans(n0, std::vector<int>(m));
+
+    for (int i = 0; i < fsm.n; ++i) {
+        for (int sym = 0; sym < fsm.m; ++sym) {
+            if (fsm.transitions[i][sym].size() == 1) trans[i][sym] = fsm.transitions[i][sym][0];
+            else trans[i][sym] = (need_dead ? dead : -1);
+        }
+    }
+
+    if (need_dead) for (int sym = 0; sym < m; ++sym) trans[dead][sym] = dead;
+
+    std::vector<char> accept(n0, 0);
+    for (int i = 0; i < fsm.n; ++i) accept[i] = fsm.accept[i];
+    if (need_dead) accept[dead] = 0;
+
+    int startstate = (fsm.startList.empty() ? 0 : fsm.startList[0]);
+
+    return {trans, startstate, accept};
+}
+
+FinStateMachine FinStateMachine::minimize() const {
+    if (!isDFA()) {
+        FinStateMachine dfa = toDFA();
+        return dfa.minimize();
+    }
+
+    auto [trans, startstate, acceptvec] = build_complete_deterministic(*this);
+    int n0 = (int)trans.size();
+    int m0 = m;
+
+    std::vector<int> accept_states;
+    std::vector<int> nonaccept_states;
+    for (int i = 0; i < n0; ++i) if (acceptvec[i]) accept_states.push_back(i); else nonaccept_states.push_back(i);
+
+    std::vector<std::vector<int>> P;
+    if (!accept_states.empty()) P.push_back(accept_states);
+    if (!nonaccept_states.empty()) P.push_back(nonaccept_states);
+
+    std::queue<std::vector<int>> Wq;
+    if (!accept_states.empty()) Wq.push(accept_states);
+    if (!nonaccept_states.empty()) Wq.push(nonaccept_states);
+
+    while (!Wq.empty()) {
+        std::vector<int> A = Wq.front(); Wq.pop();
+        std::vector<char> inA(n0, 0);
+        for (int s : A) inA[s] = 1;
+
+        for (int c = 0; c < m0; ++c) {
+            std::vector<int> X;
+            X.reserve(n0);
+            for (int s = 0; s < n0; ++s) {
+                int t = trans[s][c];
+                if (t >= 0 && inA[t]) X.push_back(s);
+            }
+
+            if (X.empty()) continue;
+
+            std::vector<std::vector<int>> newP;
+            for (auto &Y : P) {
+                std::vector<int> inter;
+                std::vector<int> diff;
+                for (int s : Y) if (std::binary_search(X.begin(), X.end(), s)) inter.push_back(s); else diff.push_back(s);
+
+                std::sort(X.begin(), X.end());
+
+                if (inter.empty() || diff.empty()) {
+                    newP.push_back(Y);
+                } else {
+                    newP.push_back(inter);
+                    newP.push_back(diff);
+
+                    if (inter.size() <= diff.size()) Wq.push(inter); else Wq.push(diff);
+                }
+            }
+
+            P.swap(newP);
+        }
+    }
+
+    std::vector<int> which(n0, -1);
+    for (int i = 0; i < (int)P.size(); ++i) for (int s : P[i]) which[s] = i;
+
+    int newn = (int)P.size();
+    FinStateMachine res(newn, m0);
+    res.startList.clear();
+    int newStart = which[startstate];
+    res.startList.push_back(newStart);
+    res.start.assign(newn, 0);
+    if (newn > 0) res.start[newStart] = 1;
+
+    res.accept.assign(newn, 0);
+    res.acceptList.clear();
+    for (int i = 0; i < newn; ++i) {
+        for (int s : P[i]) if (acceptvec[s]) { res.accept[i] = 1; res.acceptList.push_back(i); break; }
+    }
+
+    res.transitions.assign(newn, std::vector<std::vector<int>>(m0));
+    for (int i = 0; i < n0; ++i) {
+        int bi = which[i];
+        for (int c = 0; c < m0; ++c) {
+            int j = trans[i][c];
+            int bj = which[j];
+            if (std::find(res.transitions[bi][c].begin(), res.transitions[bi][c].end(), bj) == res.transitions[bi][c].end())
+                res.transitions[bi][c].push_back(bj);
+        }
+    }
+
+    return res;
+}
+
+bool FinStateMachine::is_equivalent(const FinStateMachine &other) const {
+    FinStateMachine A = *this;
+    FinStateMachine B = other;
+
+    if (!A.isDFA()) A = A.toDFA();
+    if (!B.isDFA()) B = B.toDFA();
+
+    auto [transA, startA, acceptA] = build_complete_deterministic(A);
+    auto [transB, startB, acceptB] = build_complete_deterministic(B);
+
+    if ((int)transA[0].size() != (int)transB[0].size()) return false;
+    int m0 = (int)transA[0].size();
+
+    using Pair = std::pair<int,int>;
+    std::queue<Pair> q;
+    std::set<Pair> vis;
+    q.push({startA, startB});
+    vis.insert({startA, startB});
+
+    while (!q.empty()) {
+        auto [u, v] = q.front(); q.pop();
+        if (acceptA[u] != acceptB[v]) return false;
+        for (int c = 0; c < m0; ++c) {
+            int nu = transA[u][c];
+            int nv = transB[v][c];
+            Pair p = {nu, nv};
+            if (!vis.count(p)) { vis.insert(p); q.push(p); }
+        }
+    }
+
+    return true;
+}
+
+bool FinStateMachine::is_universal() const {
+    FinStateMachine A = *this;
+    if (!A.isDFA()) A = A.toDFA();
+
+    auto [transA, startA, acceptA] = build_complete_deterministic(A);
+    int n0 = (int)transA.size();
+
+    std::vector<char> vis(n0, 0);
+    std::queue<int> q;
+    q.push(startA);
+    vis[startA] = 1;
+
+    while (!q.empty()) {
+        int u = q.front(); q.pop();
+        if (!acceptA[u]) return false;
+        for (int c = 0; c < (int)transA[u].size(); ++c) {
+            int v = transA[u][c];
+            if (!vis[v]) { vis[v] = 1; q.push(v); }
+        }
+    }
+
+    return true;
 }
 
 void FinStateMachine::writeToFile(const std::string &filepath) const {
