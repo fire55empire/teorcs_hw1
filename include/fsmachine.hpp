@@ -59,6 +59,9 @@ struct FinStateMachine{
 
 
     void writeToFile(const std::string &filepath) const;
+
+
+    static FinStateMachine from_regex(const std::string &regex);
 };
 
 

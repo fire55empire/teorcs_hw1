@@ -21,6 +21,7 @@ int main(int argc, char **argv) {
         std::cout << "  ./FSMachine minimize <in> <out>    # minimize DFA (input may be NFA)\n";
         std::cout << "  ./FSMachine equal <file1> <file2>  # print true|false\n";
         std::cout << "  ./FSMachine universal <file>       # print true|false if language == Sigma*\n";
+        std::cout << "  ./FSMachine regex <regex> <out>    # convert regex to automaton\n";
         return 0;
     }
 
@@ -65,6 +66,15 @@ int main(int argc, char **argv) {
             if (argc != 3) throw std::runtime_error("universal requires <file>");
             FinStateMachine a(argv[2]);
             std::cout << (a.is_universal() ? "true" : "false") << std::endl;
+            return 0;
+        }
+
+        if (cmd == "regex") {
+            if (argc != 4) throw std::runtime_error("regex requires <regex> <out>");
+            std::string regex_str = argv[2];
+            FinStateMachine fsm = FinStateMachine::from_regex(regex_str);
+            fsm.writeToFile(argv[3]);
+            std::cout << "OK" << std::endl;
             return 0;
         }
 

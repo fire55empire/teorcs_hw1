@@ -405,3 +405,445 @@ void FinStateMachine::writeToFile(const std::string &filepath) const {
 
     fout.close();
 }
+
+struct NFABuilder {
+    int n;
+    int m;
+    int epsilon_sym;
+    int start_state;
+    int end_state;
+    std::vector<std::vector<std::vector<int>>> transitions;
+    std::vector<char> is_accept;
+    
+    NFABuilder(int num_states, int alphabet_size) 
+        : n(num_states), m(alphabet_size), epsilon_sym(alphabet_size),
+          start_state(0), end_state(num_states - 1),
+          transitions(n, std::vector<std::vector<int>>(m + 1)),
+          is_accept(n, 0) {
+    }
+    
+    void add_transition(int from, int symbol, int to) {
+        if (from >= 0 && from < n && to >= 0 && to < n && symbol >= 0 && symbol <= m) {
+            transitions[from][symbol].push_back(to);
+        }
+    }
+    
+    std::vector<int> epsilon_closure(int state) const {
+        std::vector<int> result;
+        std::vector<char> visited(n, 0);
+        std::queue<int> q;
+        
+        q.push(state);
+        visited[state] = 1;
+        
+        while (!q.empty()) {
+            int s = q.front();
+            q.pop();
+            result.push_back(s);
+            
+            for (int next : transitions[s][epsilon_sym]) {
+                if (!visited[next]) {
+                    visited[next] = 1;
+                    q.push(next);
+                }
+            }
+        }
+        
+        std::sort(result.begin(), result.end());
+        result.erase(std::unique(result.begin(), result.end()), result.end());
+        return result;
+    }
+    
+    std::vector<int> epsilon_closure(const std::vector<int>& states) const {
+        std::vector<int> result;
+        std::vector<char> visited(n, 0);
+        std::queue<int> q;
+        
+        for (int s : states) {
+            if (!visited[s]) {
+                visited[s] = 1;
+                q.push(s);
+            }
+        }
+        
+        while (!q.empty()) {
+            int s = q.front();
+            q.pop();
+            result.push_back(s);
+            
+            for (int next : transitions[s][epsilon_sym]) {
+                if (!visited[next]) {
+                    visited[next] = 1;
+                    q.push(next);
+                }
+            }
+        }
+        
+        std::sort(result.begin(), result.end());
+        result.erase(std::unique(result.begin(), result.end()), result.end());
+        return result;
+    }
+};
+
+static FinStateMachine remove_epsilon_transitions(const NFABuilder& nfa_builder) {
+    std::vector<std::vector<int>> closures(nfa_builder.n);
+    for (int i = 0; i < nfa_builder.n; ++i) {
+        closures[i] = nfa_builder.epsilon_closure(i);
+    }
+    
+    FinStateMachine result(nfa_builder.n, nfa_builder.m);
+    
+    std::vector<int> start_closure = nfa_builder.epsilon_closure(nfa_builder.start_state);
+    result.startList = start_closure;
+    for (int s : start_closure) {
+        if (s >= 0 && s < result.n) {
+            result.start[s] = 1;
+        }
+    }
+    
+    for (int i = 0; i < nfa_builder.n; ++i) {
+        if (nfa_builder.is_accept[i]) {
+            result.accept[i] = 1;
+            result.acceptList.push_back(i);
+        }
+    }
+    
+    for (int from = 0; from < nfa_builder.n; ++from) {
+        for (int symbol = 0; symbol < nfa_builder.m; ++symbol) {
+            std::vector<int> targets;
+            std::vector<char> added(nfa_builder.n, 0);
+            
+            for (int s : closures[from]) {
+                for (int to : nfa_builder.transitions[s][symbol]) {
+                    for (int t : closures[to]) {
+                        if (!added[t]) {
+                            added[t] = 1;
+                            targets.push_back(t);
+                        }
+                    }
+                }
+            }
+            
+            std::sort(targets.begin(), targets.end());
+            targets.erase(std::unique(targets.begin(), targets.end()), targets.end());
+            
+            for (int t : targets) {
+                result.transitions[from][symbol].push_back(t);
+            }
+        }
+    }
+    
+    return result;
+}
+
+class RegexParser {
+private:
+    std::string regex;
+    size_t pos;
+    int state_counter;
+    int alphabet_size;
+    
+    void skip_whitespace() {
+        while (pos < regex.length() && std::isspace((unsigned char)regex[pos])) {
+            ++pos;
+        }
+    }
+    
+    bool at_end() {
+        skip_whitespace();
+        return pos >= regex.length();
+    }
+    
+    char peek() {
+        skip_whitespace();
+        if (pos >= regex.length()) return '\0';
+        return regex[pos];
+    }
+    
+    char consume() {
+        skip_whitespace();
+        if (pos >= regex.length()) return '\0';
+        char c = regex[pos];
+        ++pos;
+        return c;
+    }
+    
+    bool match(char c) {
+        skip_whitespace();
+        if (pos < regex.length() && regex[pos] == c) {
+            ++pos;
+            return true;
+        }
+        return false;
+    }
+    
+    bool is_operator(char c) {
+        return c == '|' || c == '*' || c == '+' || c == '?' || c == '(' || c == ')';
+    }
+    
+    NFABuilder build_symbol(char c) {
+        if (c < '0' || c > '9') {
+            throw std::runtime_error("Invalid character in regex: expected digit 0-9");
+        }
+        int symbol = c - '0';
+        
+        NFABuilder nfa(2, alphabet_size);
+        nfa.add_transition(0, symbol, 1);
+        nfa.is_accept[1] = 1;
+        return nfa;
+    }
+    
+    NFABuilder build_epsilon() {
+        NFABuilder nfa(2, alphabet_size);
+        nfa.add_transition(0, nfa.epsilon_sym, 1);
+        nfa.is_accept[1] = 1;
+        return nfa;
+    }
+    
+    NFABuilder build_alternative(NFABuilder left, NFABuilder right) {
+        int n_left = left.n;
+        int n_right = right.n;
+        int new_n = 2 + n_left + n_right;
+        
+        NFABuilder result(new_n, alphabet_size);
+        result.start_state = 0;
+        result.end_state = new_n - 1;
+        result.is_accept[result.end_state] = 1;
+        
+        for (int i = 0; i < n_left; ++i) {
+            for (int sym = 0; sym <= left.m; ++sym) {
+                for (int to : left.transitions[i][sym]) {
+                    int new_from = 1 + i;
+                    int new_to = 1 + to;
+                    result.add_transition(new_from, sym, new_to);
+                }
+            }
+            if (left.is_accept[i]) {
+                result.add_transition(1 + i, result.epsilon_sym, result.end_state);
+            }
+        }
+        
+        int right_offset = 1 + n_left;
+        for (int i = 0; i < n_right; ++i) {
+            for (int sym = 0; sym <= right.m; ++sym) {
+                for (int to : right.transitions[i][sym]) {
+                    int new_from = right_offset + i;
+                    int new_to = right_offset + to;
+                    result.add_transition(new_from, sym, new_to);
+                }
+            }
+            if (right.is_accept[i]) {
+                result.add_transition(right_offset + i, result.epsilon_sym, result.end_state);
+            }
+        }
+        
+        int left_start = 1 + left.start_state;
+        int right_start = right_offset + right.start_state;
+        result.add_transition(0, result.epsilon_sym, left_start);
+        result.add_transition(0, result.epsilon_sym, right_start);
+        
+        return result;
+    }
+    
+    NFABuilder build_concatenation(NFABuilder left, NFABuilder right) {
+        int n_left = left.n;
+        int n_right = right.n;
+        int new_n = n_left + n_right;
+        
+        NFABuilder result(new_n, alphabet_size);
+        result.start_state = left.start_state;
+        
+        for (int i = 0; i < n_left; ++i) {
+            for (int sym = 0; sym <= left.m; ++sym) {
+                for (int to : left.transitions[i][sym]) {
+                    result.add_transition(i, sym, to);
+                }
+            }
+        }
+        
+        int right_offset = n_left;
+        for (int i = 0; i < n_right; ++i) {
+            for (int sym = 0; sym <= right.m; ++sym) {
+                for (int to : right.transitions[i][sym]) {
+                    int new_from = right_offset + i;
+                    int new_to = right_offset + to;
+                    result.add_transition(new_from, sym, new_to);
+                }
+            }
+            if (right.is_accept[i]) {
+                result.is_accept[right_offset + i] = 1;
+            }
+        }
+        
+        for (int i = 0; i < n_left; ++i) {
+            if (left.is_accept[i]) {
+                int right_start = right_offset + right.start_state;
+                result.add_transition(i, result.epsilon_sym, right_start);
+                result.is_accept[i] = 0;
+            }
+        }
+        
+        result.end_state = right_offset + right.end_state;
+        return result;
+    }
+    
+    NFABuilder build_kleene(NFABuilder inner) {
+        int n_inner = inner.n;
+        int new_n = 2 + n_inner;
+        
+        NFABuilder result(new_n, alphabet_size);
+        result.start_state = 0;
+        result.end_state = new_n - 1;
+        result.is_accept[result.end_state] = 1;
+        
+        int inner_offset = 1;
+        for (int i = 0; i < n_inner; ++i) {
+            for (int sym = 0; sym <= inner.m; ++sym) {
+                for (int to : inner.transitions[i][sym]) {
+                    int new_from = inner_offset + i;
+                    int new_to = inner_offset + to;
+                    result.add_transition(new_from, sym, new_to);
+                }
+            }
+            if (inner.is_accept[i]) {
+                result.add_transition(inner_offset + i, result.epsilon_sym, inner_offset + inner.start_state);
+                result.add_transition(inner_offset + i, result.epsilon_sym, result.end_state);
+            }
+        }
+        
+        int inner_start = inner_offset + inner.start_state;
+        result.add_transition(0, result.epsilon_sym, inner_start);
+        result.add_transition(0, result.epsilon_sym, result.end_state);
+        
+        return result;
+    }
+    
+    NFABuilder build_plus(NFABuilder inner) {
+        NFABuilder kleene = build_kleene(inner);
+        return build_concatenation(inner, kleene);
+    }
+    
+    NFABuilder build_question(NFABuilder inner) {
+        NFABuilder epsilon = build_epsilon();
+        return build_alternative(epsilon, inner);
+    }
+    
+    NFABuilder parse_atom() {
+        skip_whitespace();
+        
+        if (at_end()) {
+            throw std::runtime_error("Unexpected end of regex in atom");
+        }
+        
+        if (match('(')) {
+            NFABuilder result = parse_expression();
+            if (!match(')')) {
+                throw std::runtime_error("Expected closing parenthesis");
+            }
+            return result;
+        }
+        
+        char c = consume();
+        if (c >= '0' && c <= '9') {
+            return build_symbol(c);
+        }
+        
+        throw std::runtime_error("Invalid character in regex atom: " + std::string(1, c));
+    }
+    
+    NFABuilder parse_unary() {
+        NFABuilder atom = parse_atom();
+        
+        while (!at_end()) {
+            skip_whitespace();
+            if (match('*')) {
+                atom = build_kleene(atom);
+            } else if (match('+')) {
+                atom = build_plus(atom);
+            } else if (match('?')) {
+                atom = build_question(atom);
+            } else {
+                break;
+            }
+        }
+        
+        return atom;
+    }
+    
+    NFABuilder parse_concat() {
+        NFABuilder result = parse_unary();
+        
+        while (!at_end()) {
+            char next = peek();
+            if (next == '|' || next == ')' || next == '\0') {
+                break;
+            }
+            if (next == '*' || next == '+' || next == '?') {
+                break;
+            }
+            
+            NFABuilder right = parse_unary();
+            result = build_concatenation(result, right);
+        }
+        
+        return result;
+    }
+    
+    NFABuilder parse_expression() {
+        NFABuilder result = parse_concat();
+        
+        while (match('|')) {
+            NFABuilder right = parse_concat();
+            result = build_alternative(result, right);
+        }
+        
+        return result;
+    }
+    
+public:
+    RegexParser(const std::string& regex_str, int alphabet_sz = 10)
+        : regex(regex_str), pos(0), state_counter(0), alphabet_size(alphabet_sz) {
+    }
+    
+    NFABuilder parse() {
+        int balance = 0;
+        for (char c : regex) {
+            if (c == '(') ++balance;
+            else if (c == ')') --balance;
+            if (balance < 0) {
+                throw std::runtime_error("Unmatched closing parenthesis");
+            }
+        }
+        if (balance != 0) {
+            throw std::runtime_error("Unmatched opening parenthesis");
+        }
+        
+        pos = 0;
+        NFABuilder result = parse_expression();
+        
+        skip_whitespace();
+        if (pos < regex.length()) {
+            throw std::runtime_error("Unexpected characters at end of regex");
+        }
+        
+        return result;
+    }
+};
+
+FinStateMachine FinStateMachine::from_regex(const std::string &regex) {
+    if (regex.empty()) {
+        FinStateMachine result(1, 10);
+        result.startList.push_back(0);
+        result.start[0] = 1;
+        result.acceptList.push_back(0);
+        result.accept[0] = 1;
+        return result;
+    }
+    
+    RegexParser parser(regex, 10);
+    NFABuilder nfa_builder = parser.parse();
+    
+    FinStateMachine result = remove_epsilon_transitions(nfa_builder);
+    
+    return result;
+}
